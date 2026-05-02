@@ -2,11 +2,34 @@ import subprocess
 import re
 from flask import Flask, render_template_string, request, jsonify
 import os
+import json
 
 app = Flask(__name__)
 
 # 存储自定义peer名称的字典
-custom_names = {}
+CUSTOM_NAMES_FILE = 'custom_names.json'
+
+def load_custom_names():
+    """从文件加载自定义名称"""
+    if os.path.exists(CUSTOM_NAMES_FILE):
+        try:
+            with open(CUSTOM_NAMES_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading custom names: {e}")
+            return {}
+    return {}
+
+def save_custom_names(names):
+    """保存自定义名称到文件"""
+    try:
+        with open(CUSTOM_NAMES_FILE, 'w') as f:
+            json.dump(names, f)
+    except Exception as e:
+        print(f"Error saving custom names: {e}")
+
+# 初始化时加载自定义名称
+custom_names = load_custom_names()
 
 def get_wireguard_status():
     """获取并解析wg命令输出"""
@@ -121,6 +144,19 @@ def index():
             text-align: center;
             margin-bottom: 20px;
         }
+        .view-toggle {
+            background-color: #0080FF; /* 天蓝色 */
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        .view-toggle:hover {
+            background-color: #0066CC; /* 深一点的天蓝色 */
+        }
         .refresh-btn {
             background-color: #0080FF; /* 天蓝色 */
             color: white;
@@ -184,6 +220,34 @@ def index():
         .info-value {
             color: #333;
         }
+
+        /* 表格样式 */
+        .list-view {
+            display: none;
+        }
+        .peer-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .peer-table th, .peer-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .peer-table th {
+            background-color: #0080FF; /* 天蓝色 */
+            color: white;
+        }
+        .peer-table tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .peer-table tr:hover {
+            background-color: #E6F2FF; /* 浅天蓝色 */
+        }
+
         .no-peers {
             text-align: center;
             color: #666;
@@ -197,6 +261,35 @@ def index():
                 flex-direction: column;
                 align-items: stretch;
             }
+            .peer-table, .peer-table thead, .peer-table tbody, .peer-table th, .peer-table td, .peer-table tr {
+                display: block;
+            }
+            .peer-table thead tr {
+                position: absolute;
+                top: -9999px;
+                left: -9999px;
+            }
+            .peer-table tr {
+                border: 1px solid #ccc;
+                margin-bottom: 10px;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            .peer-table td {
+                border: none;
+                position: relative;
+                padding-left: 50%;
+            }
+            .peer-table td:before {
+                content: attr(data-label);
+                position: absolute;
+                left: 6px;
+                width: 45%;
+                padding-right: 10px;
+                white-space: nowrap;
+                font-weight: bold;
+                color: #0080FF; /* 天蓝色 */
+            }
         }
     </style>
 </head>
@@ -205,45 +298,93 @@ def index():
         <h1>WireGuard Monitor</h1>
 
         <div class="controls">
+            <button class="view-toggle" onclick="switchView('card')">Card View</button>
+            <button class="view-toggle" onclick="switchView('list')">List View</button>
             <button class="refresh-btn" onclick="refreshData()">Refresh Data</button>
         </div>
 
-        {% if peers %}
-            {% for peer in peers %}
-            <div class="status-card">
-                <div class="peer-header">
-                    <span class="peer-name" id="name-{{ loop.index }}">{{ peer.name }}</span>
-                    <div class="rename-section">
-                        <input type="text" class="rename-input" id="rename-input-{{ loop.index }}" value="{{ peer.name }}" placeholder="Custom name">
-                        <button class="rename-btn" onclick="renamePeer('{{ peer.public_key }}', {{ loop.index }})">Rename</button>
+        <!-- 卡片视图 -->
+        <div id="card-view">
+            {% if peers %}
+                {% for peer in peers %}
+                <div class="status-card">
+                    <div class="peer-header">
+                        <span class="peer-name" id="name-{{ loop.index }}">{{ peer.name }}</span>
+                        <div class="rename-section">
+                            <input type="text" class="rename-input" id="rename-input-{{ loop.index }}" value="{{ peer.name }}" placeholder="Custom name">
+                            <button class="rename-btn" onclick="renamePeer('{{ peer.public_key }}', {{ loop.index }})">Rename</button>
+                        </div>
+                    </div>
+                    <div class="peer-info">
+                        <div class="info-label">IP Address:</div>
+                        <div class="info-value">{{ peer.ip }}</div>
+
+                        <div class="info-label">Endpoint:</div>
+                        <div class="info-value">{{ peer.endpoint }}</div>
+
+                        <div class="info-label">Latest Handshake:</div>
+                        <div class="info-value">{{ peer.handshake }}</div>
+
+                        <div class="info-label">Transfer:</div>
+                        <div class="info-value">{{ peer.transfer }}</div>
+
+                        <div class="info-label">Public Key:</div>
+                        <div class="info-value" style="word-break: break-all; font-size: 0.9em;">{{ peer.public_key }}</div>
                     </div>
                 </div>
-                <div class="peer-info">
-                    <div class="info-label">IP Address:</div>
-                    <div class="info-value">{{ peer.ip }}</div>
-
-                    <div class="info-label">Endpoint:</div>
-                    <div class="info-value">{{ peer.endpoint }}</div>
-
-                    <div class="info-label">Latest Handshake:</div>
-                    <div class="info-value">{{ peer.handshake }}</div>
-
-                    <div class="info-label">Transfer:</div>
-                    <div class="info-value">{{ peer.transfer }}</div>
-
-                    <div class="info-label">Public Key:</div>
-                    <div class="info-value" style="word-break: break-all; font-size: 0.9em;">{{ peer.public_key }}</div>
+                {% endfor %}
+            {% else %}
+                <div class="status-card">
+                    <div class="no-peers">No WireGuard peers found or wg command failed</div>
                 </div>
-            </div>
-            {% endfor %}
-        {% else %}
-            <div class="status-card">
-                <div class="no-peers">No WireGuard peers found or wg command failed</div>
-            </div>
-        {% endif %}
+            {% endif %}
+        </div>
+
+        <!-- 列表视图 -->
+        <div id="list-view" class="list-view">
+            {% if peers %}
+                <table class="peer-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>IP Address</th>
+                            <th>Transfer</th>
+                            <th>Latest Handshake</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for peer in peers %}
+                        <tr>
+                            <td>{{ peer.name }}</td>
+                            <td>{{ peer.ip }}</td>
+                            <td>{{ peer.transfer }}</td>
+                            <td>{{ peer.handshake }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="status-card">
+                    <div class="no-peers">No WireGuard peers found or wg command failed</div>
+                </div>
+            {% endif %}
+        </div>
     </div>
 
     <script>
+        function switchView(view) {
+            const cardView = document.getElementById('card-view');
+            const listView = document.getElementById('list-view');
+
+            if (view === 'list') {
+                cardView.style.display = 'none';
+                listView.style.display = 'block';
+            } else {
+                cardView.style.display = 'block';
+                listView.style.display = 'none';
+            }
+        }
+
         function refreshData() {
             location.reload();
         }
@@ -273,6 +414,12 @@ def index():
                     // 更新显示名称
                     const nameSpan = document.getElementById(`name-${index}`);
                     nameSpan.textContent = newName;
+                    // 同时更新列表视图中的名称
+                    const tableRows = document.querySelectorAll('.peer-table tbody tr');
+                    if(tableRows[index-1]) {
+                        const nameCell = tableRows[index-1].querySelector('td:first-child');
+                        nameCell.textContent = newName;
+                    }
                     alert('Peer renamed successfully!');
                 } else {
                     alert('Failed to rename peer: ' + data.error);
@@ -303,6 +450,9 @@ def rename_peer():
 
     # 更新自定义名称字典
     custom_names[public_key] = new_name
+
+    # 保存到文件以实现持久化存储
+    save_custom_names(custom_names)
 
     return jsonify({'success': True})
 
