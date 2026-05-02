@@ -170,6 +170,23 @@ def index():
         .refresh-btn:hover {
             background-color: #0066CC; /* 深一点的天蓝色 */
         }
+        .sort-btn {
+            background-color: #00AA44; /* 绿色 */
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 5px;
+        }
+        .sort-btn:hover {
+            background-color: #008833; /* 深一点的绿色 */
+        }
+        .sort-btn.active {
+            background-color: #FF6600; /* 橙色表示激活状态 */
+            font-weight: bold;
+        }
         .status-card {
             background-color: #E6F2FF; /* 浅天蓝色 */
             border-radius: 8px;
@@ -223,7 +240,10 @@ def index():
 
         /* 表格样式 */
         .list-view {
-            display: none;
+            display: block; /* 默认显示列表视图 */
+        }
+        .card-view {
+            display: none; /* 默认隐藏卡片视图 */
         }
         .peer-table {
             width: 100%;
@@ -301,10 +321,15 @@ def index():
             <button class="view-toggle" onclick="switchView('card')">Card View</button>
             <button class="view-toggle" onclick="switchView('list')">List View</button>
             <button class="refresh-btn" onclick="refreshData()">Refresh Data</button>
+            <span style="margin-left: 20px;">Sort by:</span>
+            <button class="sort-btn" onclick="sortData('default')" id="sort-default">Default</button>
+            <button class="sort-btn" onclick="sortData('ip')" id="sort-ip">IP Address</button>
+            <button class="sort-btn" onclick="sortData('name')" id="sort-name">Name</button>
+            <button class="sort-btn" onclick="sortData('traffic')" id="sort-traffic">Total Traffic</button>
         </div>
 
         <!-- 卡片视图 -->
-        <div id="card-view">
+        <div id="card-view" class="card-view">
             {% if peers %}
                 {% for peer in peers %}
                 <div class="status-card">
@@ -389,6 +414,150 @@ def index():
             location.reload();
         }
 
+        function parseTraffic(trafficStr) {
+            // 解析流量字符串，转换为MB用于排序
+            if (!trafficStr || trafficStr === '') return 0;
+            
+            // 处理两种格式："2.85 MiB received, 13.08 MiB sent" 或 "2.73 MiB received + 12.56 MiB sent"
+            let parts = [];
+            if (trafficStr.includes(' + ')) {
+                parts = trafficStr.split(' + ');
+            } else if (trafficStr.includes(', ')) {
+                // 提取那些以逗号分隔的数值
+                const matches = trafficStr.match(/([0-9.]+)\s*(MiB|KiB|GiB|TiB|B|MB|KB|GB|TB)/gi);
+                if (matches) {
+                    parts = matches;
+                }
+            }
+            
+            let totalBytes = 0;
+            
+            for (const part of parts) {
+                const match = part.trim().match(/([0-9.]+)\s*([KMGT]?i?B)/i);
+                if (match) {
+                    let value = parseFloat(match[1]);
+                    const unit = match[2].toUpperCase();
+                    
+                    switch (unit) {
+                        case 'B':
+                            totalBytes += value;
+                            break;
+                        case 'KB':
+                        case 'KIB':
+                            totalBytes += value * 1024;
+                            break;
+                        case 'MB':
+                        case 'MIB':
+                            totalBytes += value * 1024 * 1024;
+                            break;
+                        case 'GB':
+                        case 'GIB':
+                            totalBytes += value * 1024 * 1024 * 1024;
+                            break;
+                        case 'TB':
+                        case 'TIB':
+                            totalBytes += value * 1024 * 1024 * 1024 * 1024;
+                            break;
+                    }
+                }
+            }
+            
+            // 转换为MB返回
+            return totalBytes / (1024 * 1024);
+        }
+
+        function sortData(sortType) {
+            // 保存排序选择到 localStorage
+            localStorage.setItem('wgmonitor-sort', sortType);
+            
+            // 更新按钮状态
+            document.querySelectorAll('.sort-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`sort-${sortType}`).classList.add('active');
+
+            // 获取当前视图中的所有行数据
+            const isListView = document.getElementById('list-view').style.display !== 'none';
+            
+            if (isListView) {
+                sortListView(sortType);
+            } else {
+                sortCardView(sortType);
+            }
+        }
+
+        function sortListView(sortType) {
+            const table = document.querySelector('.peer-table');
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+
+            rows.sort((a, b) => {
+                const aCells = a.querySelectorAll('td');
+                const bCells = b.querySelectorAll('td');
+
+                switch (sortType) {
+                    case 'ip':
+                        const aIP = aCells[1].textContent;
+                        const bIP = bCells[1].textContent;
+                        return aIP.localeCompare(bIP, undefined, {numeric: true});
+                        
+                    case 'name':
+                        const aName = aCells[0].textContent.toLowerCase();
+                        const bName = bCells[0].textContent.toLowerCase();
+                        return aName.localeCompare(bName);
+                        
+                    case 'traffic':
+                        const aTraffic = parseTraffic(aCells[2].textContent);
+                        const bTraffic = parseTraffic(bCells[2].textContent);
+                        return bTraffic - aTraffic; // 降序排列，流量大的在前
+                        
+                    default:
+                        return 0; // 默认顺序
+                }
+            });
+
+            // 重新添加排序后的行
+            rows.forEach(row => tbody.appendChild(row));
+        }
+
+        function sortCardView(sortType) {
+            const container = document.getElementById('card-view');
+            const cards = Array.from(container.querySelectorAll('.status-card'));
+
+            cards.sort((a, b) => {
+                switch (sortType) {
+                    case 'ip':
+                        const aIP = a.querySelector('.peer-info .info-value:nth-child(2)').textContent;
+                        const bIP = b.querySelector('.peer-info .info-value:nth-child(2)').textContent;
+                        return aIP.localeCompare(bIP, undefined, {numeric: true});
+                        
+                    case 'name':
+                        const aName = a.querySelector('.peer-name').textContent.toLowerCase();
+                        const bName = b.querySelector('.peer-name').textContent.toLowerCase();
+                        return aName.localeCompare(bName);
+                        
+                    case 'traffic':
+                        const aTrafficText = a.querySelector('.peer-info .info-value:nth-child(6)').textContent;
+                        const bTrafficText = b.querySelector('.peer-info .info-value:nth-child(6)').textContent;
+                        const aTraffic = parseTraffic(aTrafficText);
+                        const bTraffic = parseTraffic(bTrafficText);
+                        return bTraffic - aTraffic; // 降序排列，流量大的在前
+                        
+                    default:
+                        return 0; // 默认顺序
+                }
+            });
+
+            // 重新添加排序后的卡片
+            cards.forEach(card => container.appendChild(card));
+        }
+
+        // 页面加载时恢复保存的排序选择并应用
+        document.addEventListener('DOMContentLoaded', function() {
+            const savedSort = localStorage.getItem('wgmonitor-sort') || 'default';
+            sortData(savedSort);
+        });
+
         function renamePeer(publicKey, index) {
             const input = document.getElementById(`rename-input-${index}`);
             const newName = input.value.trim();
@@ -463,4 +632,4 @@ def status():
     return jsonify(peers)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5006, debug=True)
